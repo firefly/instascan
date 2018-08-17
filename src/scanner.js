@@ -3,6 +3,18 @@ const ZXing = require('./zxing')();
 const Visibility = require('visibilityjs');
 const StateMachine = require('fsm-as-promised');
 
+function equals(a, b) {
+    if (typeof(a) !== typeof(b)) { return false; }
+    if (Array.isArray(a) && Array.isArray(b)) {
+        if (a.length !== b.length) { return false; }
+        for (let i = 0; i < a.length; i++) {
+            if (!equals(a[i], b[i])) { return false; }
+        }
+        return true;
+    }
+    return (a == b);
+}
+
 class ScanProvider {
   constructor(emitter, analyzer, captureImage, scanPeriod, refractoryPeriod) {
     this.scanPeriod = scanPeriod;
@@ -39,7 +51,7 @@ class ScanProvider {
       return null;
     }
 
-    if (skipDups && result === this._lastResult) {
+    if (skipDups && equals(result, this._lastResult)) {
       return null;
     }
 
@@ -83,8 +95,9 @@ class ScanProvider {
 }
 
 class Analyzer {
-  constructor(video) {
+  constructor(video, multiscan) {
     this.video = video;
+    this.multiscan = multiscan;
 
     this.imageBuffer = null;
     this.sensorLeft = null;
@@ -99,10 +112,19 @@ class Analyzer {
     this.decodeCallback = ZXing.Runtime.addFunction(function (ptr, len, resultIndex, resultCount) {
       let result = new Uint8Array(ZXing.HEAPU8.buffer, ptr, len);
       let str = String.fromCharCode.apply(null, result);
-      if (resultIndex === 0) {
-        window.zxDecodeResult = '';
+      if (multiscan) {
+        if (resultIndex === 0) {
+          window.zxDecodeResult = [ ];
+        }
+        window.zxDecodeResult.push(str);
+        window.zxDecodeResult.sort();
+
+      } else {
+        if (resultIndex === 0) {
+          window.zxDecodeResult = '';
+        }
+        window.zxDecodeResult += str;
       }
-      window.zxDecodeResult += str;
     });
   }
 
@@ -142,7 +164,13 @@ class Analyzer {
       ZXing.HEAPU8[this.imageBuffer + j] = Math.trunc((r + g + b) / 3);
     }
 
-    let err = ZXing._decode_qr(this.decodeCallback);
+    let err = null;
+    if (this.multiscan) {
+        err = ZXing._decode_qr_multi(this.decodeCallback);
+    } else {
+        err = ZXing._decode_qr(this.decodeCallback);
+    }
+
     if (err) {
       return null;
     }
@@ -164,7 +192,7 @@ class Scanner extends EventEmitter {
     this.mirror = (opts.mirror !== false);
     this.backgroundScan = (opts.backgroundScan !== false);
     this._continuous = (opts.continuous !== false);
-    this._analyzer = new Analyzer(this.video);
+    this._analyzer = new Analyzer(this.video, opts.multiscan === true);
     this._camera = null;
 
     let captureImage = opts.captureImage || false;
